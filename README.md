@@ -59,4 +59,12 @@ Goal: Learn the sampling distribution used for node sampling in order to improve
    - Node sampling with importance sampling
    - Maybe some others?
 
-## What we have done till now
+## Code Setup:
+Create Conda environment using:
+```
+conda create -n learn_to_sample python=3.6
+```
+install required packages using requirements.txt
+```
+pip3 install -r ./requirements.txt
+```
