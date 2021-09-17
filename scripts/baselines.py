@@ -272,13 +272,13 @@ for oiter in tqdm(range(10)):
         all_res[oiter]['train'].append({'epoch': epoch, 'time': np.sum(times), 'train_loss': np.average(train_losses), 'val_losses': loss_valid, 'val_f1': valid_f1})
         if valid_f1 > best_val + 1e-2:
             best_val = valid_f1
-            torch.save(susage, '../models/best_model.pt')
+            torch.save(susage, '../models/' + args.model_tag + '.pt')
             cnt = 0
         else:
             cnt += 1
         if cnt == args.n_stops // args.batch_num:
             break
-    best_model = torch.load('../models/best_model.pt')
+    best_model = torch.load('../models/' + args.model_tag + '.pt')
     best_model.eval()
     test_f1s = []
     
@@ -309,10 +309,10 @@ for oiter in tqdm(range(10)):
 with open(os.path.join(save_dir, 'all_res.pkl'), 'wb') as handle:
     pickle.dump(all_res, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-with open(os.path.join(save_dir, 'all_res.pkl'), 'rb') as handle:
-    b = pickle.load(handle)
-    print ('TESTING')
-    print (b)
+# with open(os.path.join(save_dir, 'all_res.pkl'), 'rb') as handle:
+#     b = pickle.load(handle)
+#     print ('TESTING')
+#     print (b)
 
 for i in all_res:
     df_temp = pd.DataFrame(all_res[i]['train'])
