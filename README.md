@@ -11,6 +11,7 @@ Goal: Learn the sampling distribution used for node sampling in order to improve
 4. [Experimental settings](#experimental-settings)
 5. [Approaches](#approaches)
 6. [Code Setup](#setup)
+7. [Datasets Info](#dataset-info)
 
 ## Notation: <div id="notation"/>
 - P(n): Probability that a node n in Neighbors is sampled. For example: 
@@ -77,3 +78,35 @@ install required packages using requirements.txt
 ```
 pip3 install -r ./requirements.txt
 ```
+
+## Dataset Info: <div name="dataset-info"/>
+
+### cora
+nodes = 2708
+edges = 10858
+feature set : 2708, 1433
+num_classes : 7
+dataset split :
+  train: 140
+  val: 500
+  test: 1000
+
+### citeseer
+nodes = 3327
+edges = 9464
+feature set : 3327, 3703
+num_classes : 6
+dataset split :
+  train: 120
+  val: 500
+  test: 1000
+
+### pubmed
+nodes = 19717
+edges = 88676
+feature set : 19717, 500
+num_classes : 3
+dataset split :
+  train: 60
+  val: 500
+  test: 1000
