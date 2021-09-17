@@ -48,12 +48,11 @@ parser.add_argument('--model_tag', type=str, default='test',
 
 args = parser.parse_args()
 
+print (args.model_tag)
 save_dir = '../results/' + args.model_tag
 if not os.path.exists(save_dir):
     os.makedirs(save_dir)
     print ('directory created!')
-
-# sys.stdout = open(os.path.join(save_dir, 'summary.txt'), 'w')
 
 class GraphConvolution(nn.Module):
     def __init__(self, n_in, n_out, bias=True):
@@ -221,7 +220,7 @@ pool = mp.Pool(args.pool_num)
 jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers)
 
 all_res = {}
-for oiter in tqdm(range(5)):
+for oiter in tqdm(range(10)):
     encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, layers=args.n_layers, dropout = 0.2).to(device)
     susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout=0.5, inp = feat_data.shape[1])
     susage.to(device)
@@ -307,10 +306,10 @@ for oiter in tqdm(range(5)):
     all_res[oiter]['test'] = test_f1s
     print('Iteration: %d, Test F1: %.3f' % (oiter, np.average(test_f1s)))
 
-with open(os.apth.join(save_dir, 'all_res.pkl'), 'wb') as handle:
+with open(os.path.join(save_dir, 'all_res.pkl'), 'wb') as handle:
     pickle.dump(all_res, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-with open(os.apth.join(save_dir, 'all_res.pkl'), 'rb') as handle:
+with open(os.path.join(save_dir, 'all_res.pkl'), 'rb') as handle:
     b = pickle.load(handle)
     print ('TESTING')
     print (b)
@@ -323,7 +322,7 @@ plt.legend()
 plt.xlabel('epoch')
 plt.ylabel('train loss')
 # plt.show()
-plt.savefig(os.apth.join(save_dir, 'train_val_loss.png'))
+plt.savefig(os.path.join(save_dir, 'train_val_loss.png'))
 plt.clf()
 
 for i in all_res:
@@ -334,7 +333,7 @@ plt.ylim(0,1)
 plt.xlabel('epoch')
 plt.ylabel('val F1')
 # plt.show()
-plt.savefig(os.apth.join(save_dir, 'val_acc.png'))
+plt.savefig(os.path.join(save_dir, 'val_acc.png'))
 plt.clf()
 
 t = []
@@ -344,8 +343,7 @@ plt.plot(range(len(t)), t)
 plt.ylim(0,1)
 plt.xlabel('epoch')
 plt.ylabel('test F1')
-plt.savefig(os.apth.join(save_dir, 'test_acc.png'))
+plt.savefig(os.path.join(save_dir, 'test_acc.png'))
 plt.clf()
 
 print ('average test F1:', np.average(t))
-# sys.stdout.close()
