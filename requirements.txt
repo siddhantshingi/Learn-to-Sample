@@ -47,12 +47,12 @@ requests==2.26.0
 scikit-learn==0.24.2
 scikit-optimize==0.8.1
 scipy==1.5.4
-setuptools==52.0.0.post20210125
+# setuptools==52.0.0.post20210125
 six==1.16.0
 threadpoolctl==2.2.0
 torch==1.9.0
 torch-geometric==2.0.0
-torch-scatter==2.0.8
+# torch-scatter==2.0.8
 torch-sparse==0.6.12
 torchvision==0.10.0
 tornado==6.1
