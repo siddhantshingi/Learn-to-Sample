@@ -1,7 +1,5 @@
 import os
 import sys
-
-from matplotlib.pyplot import savefig
 sys.path.append("..") 
 import pickle
 from utils import *
