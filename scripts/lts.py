@@ -53,6 +53,8 @@ parser.add_argument('--meta_param_norm', dest='meta_param_norm', action='store_t
                     help='Norm of meta-parameters: T/F')
 parser.add_argument('--model_tag', type=str, default='test',
                     help='name of folder to save the results')
+parser.add_argument('--opt_iter', type=int, default=10,
+                    help='Number of iterations for optimization')
 
 args = parser.parse_args()
 
@@ -244,7 +246,7 @@ def package_mxl(mxl, device):
 f = open(os.path.join(save_dir, 'summary.txt'), 'w')
 
 if args.cuda != -1:
-    device = torch.device("cuda:" + str(args.cuda))
+    device = torch.device("cuda")
 else:
     device = torch.device("cpu")
 
@@ -255,6 +257,7 @@ edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = lo
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
 lap_matrix = row_normalize(adj_matrix + sp.eye(adj_matrix.shape[0]))
+print (feat_data.shape)
 if type(feat_data) == scipy.sparse.lil.lil_matrix:
     feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
 else:
@@ -274,30 +277,40 @@ elif args.sample_method == 'full':
 
 # converting to torch graph
 adj_torch = torch_geometric.data.Data(edge_index = torch.tensor([edges[:,0], edges[:,1]]))
-# converting to networkx graph
-adj_nx = tg.to_networkx(adj_torch)
-adj_nx.num_nodes = feat_data.shape[0]
 
-# calculating centralities
-eigen_cen = list(nx.eigenvector_centrality(adj_nx).values())
-bet_cen = list(nx.betweenness_centrality(adj_nx).values())
-clos_cen = list(nx.closeness_centrality(adj_nx).values())
-deg_cen = list(nx.degree_centrality(adj_nx).values())
-cen = [eigen_cen, bet_cen, clos_cen, deg_cen]
-print ('Feature set calculated!!')
-f.write('Feature set calculated!!' + '\n')
+if not os.path.exists(os.path.join(save_dir, 'feature_set.pkl')):
+    # converting to networkx graph
+    adj_nx = tg.to_networkx(adj_torch)
+    adj_nx.num_nodes = feat_data.shape[0]
 
-feature_set = np.array(cen)
+    # calculating centralities
+    eigen_cen = list(nx.eigenvector_centrality(adj_nx).values())
+    bet_cen = list(nx.betweenness_centrality(adj_nx).values())
+    clos_cen = list(nx.closeness_centrality(adj_nx).values())
+    deg_cen = list(nx.degree_centrality(adj_nx).values())
+    cen = [eigen_cen, bet_cen, clos_cen, deg_cen]
+    print ('Feature set calculated!!')
+    f.write('Feature set calculated!!' + '\n')
+    feature_set = np.array(cen)
+    with open(os.path.join(save_dir, 'feature_set.pkl'), 'wb') as handle:
+        pickle.dump(feature_set, handle, protocol=pickle.HIGHEST_PROTOCOL)
+else:
+    print ('using cached data!')
+    pkl_loader = open(os.path.join(save_dir, 'feature_set.pkl'),"rb")
+    feature_set = pickle.load(pkl_loader)
+
 i = 0
 def optimization_function(x):
     global feature_set
     global i
+    start = time.time()
     print('iteration number', i)
     f.write('iteration number: ' + str(i) + '\n')
     i += 1
 
     ## should we normalise here?
     if (args.meta_param_norm):
+        print ('meta_param_norm')
         x = x / np.sum(x)
     params = np.zeros(feature_set.shape) + np.array(x).reshape(-1,1)
 
@@ -378,7 +391,8 @@ def optimization_function(x):
                 cnt += 1
             if cnt == args.n_stops // args.batch_num:
                 break
-        
+    print('iteration time: ', time.time() - start)
+    f.write('iteration time: ' + str(time.time() - start) + '\n')   
     return (1-best_val)
 
     '''
@@ -398,8 +412,9 @@ def optimization_function(x):
     
     '''
 
-
-res = gp_minimize(optimization_function, [(0.0, 1.0)] * feature_set.shape[0], n_calls = 10)
+start = time.time()
+res = gp_minimize(optimization_function, [(0.0, 1.0)] * feature_set.shape[0], n_calls = args.opt_iter)
+print ('total time:', time.time() - start)
 f.write(str(res) + '\n')
 with open(os.path.join(save_dir, 'opt_res.pkl'), 'wb') as handle:
     pickle.dump(res, handle, protocol=pickle.HIGHEST_PROTOCOL)

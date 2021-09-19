@@ -182,7 +182,7 @@ def package_mxl(mxl, device):
 
 
 if args.cuda != -1:
-    device = torch.device("cuda:" + str(args.cuda))
+    device = torch.device("cuda")
 else:
     device = torch.device("cpu")
 
