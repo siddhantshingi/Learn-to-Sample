@@ -13,6 +13,7 @@ import scipy
 import multiprocessing as mp
 from skopt import gp_minimize
 from skopt.plots import plot_convergence
+from sklearn.preprocessing import MinMaxScaler
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -51,18 +52,36 @@ parser.add_argument('--sample_norm', type=str, default='L1',
                     help='Norm of sampling probability: L1/softmax')
 parser.add_argument('--meta_param_norm', dest='meta_param_norm', action='store_true',
                     help='Norm of meta-parameters: T/F')
+parser.add_argument('--standardise', dest='standardise', action='store_true',
+                    help='standardise feature data: T/F')
 parser.add_argument('--model_tag', type=str, default='test',
                     help='name of folder to save the results')
 parser.add_argument('--opt_iter', type=int, default=10,
                     help='Number of iterations for optimization')
+parser.add_argument('--feature_set', type=str, default=None,
+                    help='Which feature set to use. Must be present in data/feature_sets/')
+parser.add_argument('--num_trials', type=int, default=5,
+                    help='Number of trials of traning in each bayes opt iteration')
 
 args = parser.parse_args()
 
-print (args.model_tag)
+print ('MODEL TAG:', args.model_tag)
 save_dir = '../results/' + args.model_tag
+checkpoint_dir = os.path.join(save_dir, 'checkpoints')
+feature_set_file = '../data/feature_sets/' + args.feature_set + '_' + args.dataset + '.pkl'
+
+## Create folder to save results
 if not os.path.exists(save_dir):
     os.makedirs(save_dir)
-    print ('directory created!')
+    print ('results directory created!')
+## Create 'checkpoints' folder to checkpoint models inside results dir
+if not os.path.exists(checkpoint_dir):
+    os.makedirs(checkpoint_dir)
+    print ('checkpoints directory created!')
+
+
+## Open logs file
+logs = open(os.path.join(save_dir, 'logs.txt'), 'w')
 
 class GraphConvolution(nn.Module):
     def __init__(self, n_in, n_out, bias=True):
@@ -73,7 +92,6 @@ class GraphConvolution(nn.Module):
     def forward(self, x, adj):
         out = self.linear(x)
         return F.elu(torch.spmm(adj, out))
-
 
 class GCN(nn.Module):
     def __init__(self, nfeat, nhid, layers, dropout):
@@ -225,7 +243,6 @@ def default_sampler(seed, batch_nodes, samp_num_list, num_nodes, lap_matrix, dep
     mx = sparse_mx_to_torch_sparse_tensor(lap_matrix)
     return [mx for i in range(depth)], np.arange(num_nodes), batch_nodes
 
-
 def prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, num_nodes, lap_matrix, depth, prob_norm):
     jobs = []
     for _ in process_ids:
@@ -243,21 +260,19 @@ def package_mxl(mxl, device):
     return [torch.sparse.FloatTensor(mx[0], mx[1], mx[2]).to(device) for mx in mxl]
 
 
-f = open(os.path.join(save_dir, 'summary.txt'), 'w')
-
 if args.cuda != -1:
     device = torch.device("cuda")
 else:
     device = torch.device("cpu")
 
-f.write(args.dataset + ' ' + args.sample_method + '\n')
+logs.write(args.dataset + ' ' + args.sample_method + ' ' + args.model_tag + '\n')
+logs.write(str(args))
 
 edges, labels, feat_data, num_classes, train_nodes, valid_nodes, test_nodes = load_data(args.dataset, base_dir='../')
 
 adj_matrix = get_adj(edges, feat_data.shape[0])
 
 lap_matrix = row_normalize(adj_matrix + sp.eye(adj_matrix.shape[0]))
-print (feat_data.shape)
 if type(feat_data) == scipy.sparse.lil.lil_matrix:
     feat_data = torch.FloatTensor(feat_data.todense()).to(device) 
 else:
@@ -278,7 +293,7 @@ elif args.sample_method == 'full':
 # converting to torch graph
 adj_torch = torch_geometric.data.Data(edge_index = torch.tensor([edges[:,0], edges[:,1]]))
 
-if not os.path.exists(os.path.join(save_dir, 'feature_set.pkl')):
+if not os.path.exists(feature_set_file):
     # converting to networkx graph
     adj_nx = tg.to_networkx(adj_torch)
     adj_nx.num_nodes = feat_data.shape[0]
@@ -290,58 +305,65 @@ if not os.path.exists(os.path.join(save_dir, 'feature_set.pkl')):
     deg_cen = list(nx.degree_centrality(adj_nx).values())
     cen = [eigen_cen, bet_cen, clos_cen, deg_cen]
     print ('Feature set calculated!!')
-    f.write('Feature set calculated!!' + '\n')
-    feature_set = np.array(cen)
-    with open(os.path.join(save_dir, 'feature_set.pkl'), 'wb') as handle:
+    logs.write('Feature set calculated!!' + '\n')
+    feature_set = np.array(cen).T
+    # if args.standardise:
+    #     feature_set = MinMaxScaler().fit_transform(np.transpose(feature_set))
+    #     feature_set = np.transpose(feature_set)
+    with open(feature_set_file, 'wb') as handle:
         pickle.dump(feature_set, handle, protocol=pickle.HIGHEST_PROTOCOL)
 else:
-    print ('using cached data!')
-    pkl_loader = open(os.path.join(save_dir, 'feature_set.pkl'),"rb")
+    print ('using cached data! from ' + feature_set_file)
+    pkl_loader = open(feature_set_file,"rb")
     feature_set = pickle.load(pkl_loader)
 
 i = 0
+global_best_val = 0
 def optimization_function(x):
+    global global_best_val
     global feature_set
     global i
     start = time.time()
     print('iteration number', i)
-    f.write('iteration number: ' + str(i) + '\n')
+    logs.write('iteration number: ' + str(i) + '\n')
     i += 1
 
-    ## should we normalise here?
+    ## Normalise the parameters
     if (args.meta_param_norm):
-        print ('meta_param_norm')
         x = x / np.sum(x)
-    params = np.zeros(feature_set.shape) + np.array(x).reshape(-1,1)
+    # params = np.zeros(feature_set.shape) + np.array(x).reshape(-1,1)
 
-    prob_unnorm = np.sum(params * feature_set, axis = 0)
+    prob_unnorm = feature_set.dot(x)
     ## take norm or take softmax
     if (args.sample_norm == 'softmax'):
         prob_norm = np.exp(prob_unnorm) / sum(np.exp(prob_unnorm))
     elif (args.sample_norm == 'L1'):
         prob_norm = prob_unnorm / np.linalg.norm( prob_unnorm, ord = 1 )
 
-    f.write('-------------------------------------------------------------------' + '\n')
-    f.write('params = ' + str(x) + '\n')
+    logs.write('-------------------------------------------------------------------' + '\n')
+    logs.write('params = ' + str(x) + '\n')
 
     process_ids = np.arange(args.batch_num)
     samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp_num, args.samp_num])
 
     pool = mp.Pool(args.pool_num)
     jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers, prob_norm)
-    all_res = []
-    for oiter in range(1):
+    best_val_f1s = []
+    best_models = []
+    for _ in range(args.num_trials):
+        logs.write('-' * 10 + '\n')
+
+        ## Model, optimizer defination
         encoder = GCN(nfeat = feat_data.shape[1], nhid=args.nhid, layers=args.n_layers, dropout = 0.2).to(device)
         susage  = SuGCN(encoder = encoder, num_classes=num_classes, dropout=0.5, inp = feat_data.shape[1])
         susage.to(device)
-        
         optimizer = optim.Adam(filter(lambda p : p.requires_grad, susage.parameters()))
+        
+        ## train model for args.epoch_num times
         best_val = 0
-        best_tst = -1
-        cnt = 0
         times = []
-        res   = []
-        f.write('-' * 10 + '\n')
+        cnt = 0
+        best_model = None
         for epoch in np.arange(args.epoch_num):
             susage.train()
             train_losses = []
@@ -353,7 +375,10 @@ def optimization_function(x):
             '''
                 Use CPU-GPU cooperation to reduce the overhead for sampling. (conduct sampling while training)
             '''
+            ## prepare batches for training
             jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers, prob_norm)
+            
+            ## training for each batch args.n_iters times
             for _iter in range(args.n_iters):
                 for adjs, input_nodes, output_nodes in train_data:    
                     adjs = package_mxl(adjs, device)
@@ -372,6 +397,7 @@ def optimization_function(x):
                     times += [time.time() - t1]
                     train_losses += [loss_train.detach().tolist()]
                     del loss_train
+            ## running on validation dataset
             susage.eval()
             adjs, input_nodes, output_nodes = valid_data
             adjs = package_mxl(adjs, device)
@@ -380,42 +406,48 @@ def optimization_function(x):
                 output = output[output_nodes]
             loss_valid = F.cross_entropy(output, labels[output_nodes]).detach().tolist()
             valid_f1 = f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')
-            st = ('Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f \n') % (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1) 
-            f.write(st + '\n')
 
+            ## log epoch details
+            st = ('Epoch: %d (%.1fs) Train Loss: %.2f    Valid Loss: %.2f Valid F1: %.3f \n') % (epoch, np.sum(times), np.average(train_losses), loss_valid, valid_f1) 
+            logs.write(st + '\n')
+
+            ## check for best model so far in current training trial
             if valid_f1 > best_val + 1e-2:
                 best_val = valid_f1
-                torch.save(susage, '../models/' + args.model_tag + '.pt')
+                best_model = susage
                 cnt = 0
             else:
                 cnt += 1
+            
+            ## Stop training if val accuracy does not increase for args.n_stops epochs
             if cnt == args.n_stops // args.batch_num:
                 break
+        ## Save training details and best_model
+        logs.write('best_val_F1: ' + str(best_val)  + '\n')
+        best_val_f1s.append(best_val)
+        best_models.append(best_model)
+
+    ## If the mean val accuracy in this training is best so far then checkpoint these models.
+    # TODO: Should we track global best validation accuracy or global best mean validation accuracy? 
+    # i.e max(best_val_f1s) > global_best_val or mean(best_val_f1s) > global_best_val?
+    if np.mean(best_val_f1s) > global_best_val:
+        global_best_val = np.mean(best_val_f1s)
+        for k, model in enumerate(best_models):
+            torch.save(model, os.path.join(checkpoint_dir, str(k) + '.pt'))
+    logs.write('mean_best_val_F1 for current iteration: ' + str(np.mean(best_val_f1s)) + '\n')
+    logs.write('global_val_F1: ' + str(global_best_val) + '\n')
     print('iteration time: ', time.time() - start)
-    f.write('iteration time: ' + str(time.time() - start) + '\n')   
-    return (1-best_val)
+    logs.write('iteration time: ' + str(time.time() - start) + '\n')
+    return (1 - np.mean(best_val_f1s))
 
-    '''
-            If using batch sampling for inference:
-    '''
-        #     for b in np.arange(len(test_nodes) // args.batch_size):
-        #         batch_nodes = test_nodes[b * args.batch_size : (b+1) * args.batch_size]
-        #         adjs, input_nodes, output_nodes = sampler(np.random.randint(2**32 - 1), batch_nodes,
-        #                                     samp_num_list * 20, len(feat_data), lap_matrix, args.n_layers)
-        #         adjs = package_mxl(adjs, device)
-        #         output = best_model.forward(feat_data[input_nodes], adjs)[output_nodes]
-        #         test_f1 = f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')
-        #         test_f1s += [test_f1]
-        
-    '''
-            If using full-batch inference:
-    
-    '''
 
+## Bayesian Optimization
 start = time.time()
-res = gp_minimize(optimization_function, [(0.0, 1.0)] * feature_set.shape[0], n_calls = args.opt_iter)
+res = gp_minimize(optimization_function, [(0.0, 1.0)] * feature_set.shape[1], n_calls = args.opt_iter)
 print ('total time:', time.time() - start)
-f.write(str(res) + '\n')
+
+logs.write('OPTIMIZATION RESULTS:\n')
+logs.write(str(res) + '\n')
 with open(os.path.join(save_dir, 'opt_res.pkl'), 'wb') as handle:
     pickle.dump(res, handle, protocol=pickle.HIGHEST_PROTOCOL)
 print ('OPTIMIZATION COMPLETE')
@@ -426,18 +458,23 @@ fig.axes.append(ax)
 plt.savefig(os.path.join(save_dir, 'convergence.png'))
 
 samp_num_list = np.array([args.samp_num, args.samp_num, args.samp_num, args.samp_num, args.samp_num])
-best_model = torch.load('../models/' + args.model_tag + '.pt')
-best_model.eval()
-test_f1s = []
 batch_nodes = test_nodes
 adjs, input_nodes, output_nodes = default_sampler(np.random.randint(2**32 - 1), batch_nodes, samp_num_list * 20, len(feat_data), lap_matrix, args.n_layers)
 adjs = package_mxl(adjs, device)
+test_f1s = []
+for i in range(args.num_trials):
+    best_model = torch.load(os.path.join(checkpoint_dir, str(i) + '.pt'))
+    best_model.eval()
+    output = best_model.forward(feat_data[input_nodes], adjs)[output_nodes]
+    test_f1s += [f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')]
 
-output = best_model.forward(feat_data[input_nodes], adjs)[output_nodes]
-test_f1s = [f1_score(output.argmax(dim=1).cpu(), labels[output_nodes].cpu(), average='micro')]
-f.write('test f1 score' + '\n')
-f.write(str(test_f1s) + '\n')
+logs.write('test f1 score' + '\n')
+logs.write(str(np.mean(test_f1s)) + ' +/- ' + str(np.std(test_f1s)) + '\n')
+logs.write('max test f1 score' + '\n')
+logs.write(str(np.max(test_f1s)) + '\n')
 print ('test f1 score')
-print (str(test_f1s))
+print (str(np.mean(test_f1s)) + ' +/- ' + str(np.std(test_f1s)))
+print ('max test f1 score')
+print (str(np.max(test_f1s)))
 
-f.close()
+logs.close()
