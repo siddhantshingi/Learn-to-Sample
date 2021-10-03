@@ -375,7 +375,7 @@ def optimization_function(x):
             '''
                 Use CPU-GPU cooperation to reduce the overhead for sampling. (conduct sampling while training)
             '''
-            ## prepare batches for training
+            ## prepare batches for training (next epoch)
             jobs = prepare_data(pool, sampler, process_ids, train_nodes, valid_nodes, samp_num_list, len(feat_data), lap_matrix, args.n_layers, prob_norm)
             
             ## training for each batch args.n_iters times
@@ -419,7 +419,7 @@ def optimization_function(x):
             else:
                 cnt += 1
             
-            ## Stop training if val accuracy does not increase for args.n_stops epochs
+            ## Stop training if val accuracy does not increase for args.n_stops batches
             if cnt == args.n_stops // args.batch_num:
                 break
         ## Save training details and best_model
@@ -428,8 +428,6 @@ def optimization_function(x):
         best_models.append(best_model)
 
     ## If the mean val accuracy in this training is best so far then checkpoint these models.
-    # TODO: Should we track global best validation accuracy or global best mean validation accuracy? 
-    # i.e max(best_val_f1s) > global_best_val or mean(best_val_f1s) > global_best_val?
     if np.mean(best_val_f1s) > global_best_val:
         global_best_val = np.mean(best_val_f1s)
         for k, model in enumerate(best_models):
